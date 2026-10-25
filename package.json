@@ -1,0 +1,15 @@
+{
+  "name": "solid-to-scad",
+  "version": "0.1.0",
+  "description": "Turn STL files into one parametric OpenSCAD file for MakerWorld's Parametric Model Maker",
+  "type": "module",
+  "main": "src/core/index.js",
+  "bin": { "stl2scad": "bin/stl2scad.js" },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "manifold-3d": "3.5.4"
+  }
+}
