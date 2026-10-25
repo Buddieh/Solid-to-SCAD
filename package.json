@@ -2,6 +2,12 @@
   "name": "solid-to-scad",
   "version": "0.1.0",
   "description": "Turn STL files into one parametric OpenSCAD file for MakerWorld's Parametric Model Maker",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Buddieh/Solid-to-SCAD.git"
+  },
+  "homepage": "https://buddieh.github.io/Solid-to-SCAD/",
   "type": "module",
   "main": "src/core/index.js",
   "bin": {
