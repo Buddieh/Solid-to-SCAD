@@ -95,3 +95,26 @@ export function volume({ points, faces }) {
   }
   return v / 6;
 }
+
+/**
+ * Write an indexed mesh as binary STL.
+ * @param {{points: ArrayLike<number>, faces: ArrayLike<number>}} mesh
+ * @returns {Uint8Array}
+ */
+export function writeSTL({ points: P, faces: F }) {
+  const n = F.length / 3;
+  const bytes = new Uint8Array(84 + n * 50);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(80, n, true);
+  for (let t = 0; t < n; t++) {
+    const o = 84 + t * 50;
+    const [a, b, c] = [F[t * 3] * 3, F[t * 3 + 1] * 3, F[t * 3 + 2] * 3];
+    const u = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]];
+    const v = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+    const nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const l = Math.hypot(...nrm) || 1;
+    for (let k = 0; k < 3; k++) view.setFloat32(o + k * 4, nrm[k] / l, true);
+    [a, b, c].forEach((p, j) => { for (let k = 0; k < 3; k++) view.setFloat32(o + 12 + j * 12 + k * 4, P[p + k], true); });
+  }
+  return bytes;
+}
