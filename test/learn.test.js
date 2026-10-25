@@ -1,7 +1,7 @@
 // Learning a parameter from two exports of the same model.
-// box.stl / lid.stl are Revit exports at 35 x 105 x 30. box_50x136.5x40.stl is Revit's own export
+// box.stl / lid.stl are CAD exports at 35 x 105 x 30. box_50x136.5x40.stl is the CAD program's own export
 // with all three values changed. The single-value variants (box_width_50.stl, ...) change one
-// value each and were made with the zone stretch that matches Revit (see revit.test.js).
+// value each and were made with the zone stretch that matches the CAD export (see cad.test.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -16,8 +16,8 @@ import { load } from './helpers.js';
 
 const box = await simplifyMesh(load('box.stl'));
 const lid = await simplifyMesh(load('lid.stl'));
-const revitBox = load('box_50x136.5x40.stl');
-const revitLid = load('lid_50x136.5.stl');
+const cadBox = load('box_50x136.5x40.stl');
+const cadLid = load('lid_50x136.5.stl');
 
 const params = [
   { name: 'width', base: 35, variant: 50 },
@@ -30,8 +30,8 @@ for (const p of params) {
   if (p.name !== 'height') learned.lid[p.name] = learnChange(lid, load(`lid_${p.name}_${p.variant}.stl`));
 }
 
-test('learns a change from Revit\'s own resized export', () => {
-  const l = learnChange(box, revitBox);
+test('learns a change from the CAD program\'s own resized export', () => {
+  const l = learnChange(box, cadBox);
   assert.ok(l.fit.max < 0.02, `fit ${l.fit.max}`);
   for (let k = 0; k < 3; k++) {
     const moved = l.tables[k].map((t, i) => t + l.delta[k][i]);
@@ -48,11 +48,11 @@ test('every single-value change fits closely', () => {
   }
 });
 
-test('changes learned one at a time combine into Revit\'s export', () => {
-  for (const [part, mesh, revit] of [['box', box, revitBox], ['lid', lid, revitLid]]) {
+test('changes learned one at a time combine into the CAD export', () => {
+  for (const [part, mesh, cad] of [['box', box, cadBox], ['lid', lid, cadLid]]) {
     const ls = Object.values(learned[part]);
     const moved = applyChanges(mesh, ls[0], ls.map(() => 1), ls.map(l => l.delta));
-    const dev = meshDeviation(moved, revit);
+    const dev = meshDeviation(moved, cad);
     assert.ok(dev.max < 0.05, `${part}: ${dev.max}`);
   }
 });
@@ -93,16 +93,16 @@ test('writes a Customizer slider for each value', () => {
 let openscad = null;
 try { execFileSync('openscad', ['--version'], { stdio: 'ignore' }); openscad = 'openscad'; } catch {}
 
-test('OpenSCAD renders the learned model at Revit\'s sizes', { skip: !openscad && 'openscad not installed' }, () => {
+test('OpenSCAD renders the learned model at the CAD export\'s sizes', { skip: !openscad && 'openscad not installed' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'learned-'));
   const file = join(dir, 'model.scad');
   writeFileSync(file, scad);
-  for (const [part, revit] of [['box', revitBox], ['lid', revitLid]]) {
+  for (const [part, cad] of [['box', cadBox], ['lid', cadLid]]) {
     const out = join(dir, `${part}.stl`);
     execFileSync(openscad, ['-o', out, '-D', `part="${part}"`, '-D', 'width=50', '-D', 'length=136.5', '-D', 'height=40', file], { stdio: 'pipe' });
     const mesh = indexMesh(parseSTL(readFileSync(out)));
     assert.equal(openEdgeCount(mesh), 0, `${part} is watertight`);
-    const dev = meshDeviation(mesh, revit);
+    const dev = meshDeviation(mesh, cad);
     assert.ok(dev.max < 0.05, `${part}: ${dev.max}`);
   }
 });
