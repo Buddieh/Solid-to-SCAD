@@ -1,9 +1,8 @@
-// 3D preview: parts laid out like the exported "all" view, with stretch zones drawn as slabs.
+// 3D preview: parts laid out like the exported "all" view.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const AXIS_COLORS = [0xd1495b, 0x3a9b5c, 0x3d7fd1];
 const PART_COLORS = [0x6f9c80, 0xe8e3d8, 0x4f7cac, 0xe0a458, 0xc8553d, 0x8a6fb0];
 
 export class Viewer {
@@ -46,18 +45,15 @@ export class Viewer {
     this.render();
   }
 
-  /**
-   * @param {{mesh: {points: Float64Array, faces: Uint32Array}, offsetX: number}[]} parts  stretched meshes
-   * @param {{axis: number, lo: number, hi: number, part: number}[]} slabs  zones in stretched coordinates
-   */
-  show(parts, slabs) {
+  /** @param {{mesh: {points: Float64Array, faces: Uint32Array}, offsetX: number}[]} parts */
+  show(parts) {
     for (const child of [...this.content.children]) {
       child.geometry?.dispose();
       child.material?.dispose();
       this.content.remove(child);
     }
     const all = new THREE.Box3();
-    const partBoxes = parts.map(({ mesh, offsetX }, i) => {
+    parts.forEach(({ mesh, offsetX }, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(mesh.points), 3));
       geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(mesh.faces), 1));
@@ -69,34 +65,8 @@ export class Viewer {
       m.position.x = offsetX;
       this.content.add(m);
       geo.computeBoundingBox();
-      const box = geo.boundingBox.clone().translate(new THREE.Vector3(offsetX, 0, 0));
-      all.union(box);
-      return box;
+      all.union(geo.boundingBox.clone().translate(new THREE.Vector3(offsetX, 0, 0)));
     });
-    for (const s of slabs) {
-      const box = partBoxes[s.part];
-      if (!box) continue;
-      const min = box.min.clone().subScalar(1), max = box.max.clone().addScalar(1);
-      // Draw the two zone edges as thin translucent cut planes.
-      const key = ['x', 'y', 'z'][s.axis];
-      const offset = s.axis === 0 ? parts[s.part].offsetX : 0;
-      for (const t of [s.lo, s.hi]) {
-        const pmin = min.clone(), pmax = max.clone();
-        pmin[key] = pmax[key] = t + offset;
-        const size = pmax.clone().sub(pmin);
-        size[key] = 0.05;
-        const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-        const plane = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-          color: AXIS_COLORS[s.axis], transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide,
-        }));
-        plane.position.copy(pmin.clone().add(pmax).multiplyScalar(0.5));
-        this.content.add(plane);
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: AXIS_COLORS[s.axis] }));
-        edges.position.copy(plane.position);
-        this.content.add(edges);
-      }
-    }
     if (!all.isEmpty() && !this.framed) this.frame(all);
     this.render();
   }

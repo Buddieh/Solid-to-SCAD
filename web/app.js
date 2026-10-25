@@ -1,407 +1,544 @@
-// Solid to SCAD web app: load STL parts, review the suggested stretch zones, export one .scad.
+// Solid to SCAD web app: load the default export, add one changed export per value, learn what
+// each value moves, preview, and export one .scad.
 
 import {
-  parseSTL, indexMesh, openEdgeCount, bounds, simplifyMesh, suggestModel,
-  cleanRanges, mapValue, stretchMesh, exportScad,
+  parseSTL, indexMesh, openEdgeCount, bounds, simplifyMesh, coordinateTables,
+  applyChanges, safeRange, exportLearnedScad,
 } from './src/core/index.js';
 import { Viewer } from './viewer.js';
 
-const AXES = ['x', 'y', 'z'];
 const SPACING = 5;
+const GOOD_FIT = 0.05;  // mm: within this the learned change reproduces the changed export
+const BAD_FIT = 0.5;    // mm: beyond this the change is not something the app can learn
+const KEEP = 0.05;      // no gap between coordinates may shrink below 5% of its default length
+const SUGGEST_KEEP = 0.25; // suggested ranges keep at least a quarter, so they stay useful
 const $ = id => document.getElementById(id);
 
 const state = {
-  parts: [],   // {name, fileName, raw, mesh, open}
-  params: [],  // from suggestModel, plus {enabled, preview}
-  tolerance: 0.001,
+  parts: [],   // {id, name, fileName, mesh, tables, index, open, error}
+  params: [],  // {id, name, base, variant, min, max, step, rangeEdited, preview, slots: {partId: Slot}}
+};
+// Slot: {fileName, mesh, status: 'learning'|'done'|'error', progress, learned, error}
+
+let nextId = 1;
+const viewer = new Viewer($('view'));
+
+// ---------- learning (in a worker, one job at a time) ----------
+
+const worker = new Worker(new URL('./learn-worker.js', import.meta.url), { type: 'module' });
+const jobs = new Map();
+let queue = Promise.resolve();
+
+worker.onmessage = ({ data }) => {
+  const job = jobs.get(data.id);
+  if (!job) return;
+  if ('progress' in data) { job.onProgress(data.progress); return; }
+  jobs.delete(data.id);
+  if (data.error) job.reject(new Error(data.error)); else job.resolve(data.result);
 };
 
-const viewer = new Viewer($('view'));
+function learn(base, variant, onProgress) {
+  const run = () => new Promise((resolve, reject) => {
+    const id = nextId++;
+    jobs.set(id, { resolve, reject, onProgress });
+    worker.postMessage({ id, base, variant });
+  });
+  const p = queue.then(run, run);
+  queue = p.catch(() => {});
+  return p;
+}
 
 // ---------- loading ----------
 
-async function addFiles(fileList) {
-  const files = [...fileList].filter(f => /\.stl$/i.test(f.name));
-  if (!files.length) return;
-  setStatus(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`);
-  for (const file of files) {
-    try {
-      const raw = indexMesh(parseSTL(await file.arrayBuffer()));
-      state.parts.push({ name: uniqueName(partName(file.name)), fileName: file.name, raw, mesh: null, open: openEdgeCount(raw) });
-    } catch (e) {
-      alert(`${file.name}: ${e.message}`);
-    }
-  }
-  await processParts();
+async function readMesh(file) {
+  return indexMesh(parseSTL(await file.arrayBuffer()));
 }
 
+async function addParts(files) {
+  files = [...files].filter(f => /\.stl$/i.test(f.name));
+  if (!files.length) return;
+  for (const file of files) {
+    setStatus(`Reading ${file.name}…`);
+    const part = { id: nextId++, name: uniquePartName(partName(file.name)), fileName: file.name };
+    try {
+      const raw = await readMesh(file);
+      part.open = openEdgeCount(raw);
+      if (part.open) throw new Error(`has ${part.open} open edges. Export it as a closed solid.`);
+      setStatus(`Simplifying ${file.name}…`);
+      part.mesh = await simplifyMesh(raw);
+      Object.assign(part, coordinateTables(part.mesh));
+    } catch (e) {
+      part.error = e.message;
+    }
+    state.parts.push(part);
+  }
+  setStatus('');
+  viewer.reset();
+  renderAll();
+}
+
+async function setSlot(param, part, file) {
+  const slot = { fileName: file.name, status: 'learning', progress: 0 };
+  param.slots[part.id] = slot;
+  renderParams();
+  try {
+    const mesh = await readMesh(file);
+    const open = openEdgeCount(mesh);
+    if (open) throw new Error(`has ${open} open edges. Export it as a closed solid.`);
+    slot.learned = await learn(
+      { points: part.mesh.points, faces: part.mesh.faces },
+      { points: mesh.points, faces: mesh.faces },
+      p => { slot.progress = p; refreshSlot(param, part); },
+    );
+    slot.status = 'done';
+  } catch (e) {
+    slot.status = 'error';
+    slot.error = e.message;
+  }
+  if (param.slots[part.id] !== slot) return; // replaced while learning
+  suggestRange(param);
+  renderParams();
+  renderExport();
+  updateView();
+}
+
+// Turn "Box v2 (parametric).stl" into "box", and keep part names unique.
 function partName(fileName) {
   let n = fileName.replace(/\.stl$/i, '').toLowerCase();
-  n = n.replace(/\b(parametric|stl|v\d+)\b/g, ' ').trim();
+  n = n.replace(/\b(parametric|stl|v\d+|default)\b/g, ' ').trim();
   const words = n.split(/[^a-z0-9]+/).filter(Boolean);
-  n = words[words.length - 1] || 'part';
+  n = words.join('_') || 'part';
   return /^\d/.test(n) ? `part_${n}` : n;
 }
 
-function uniqueName(base, except) {
+function uniquePartName(base, except) {
   let name = base, i = 2;
   while (state.parts.some(p => p !== except && p.name === name)) name = `${base}_${i++}`;
   return name;
 }
 
-async function processParts() {
-  $('empty').hidden = state.parts.length > 0;
-  for (const p of state.parts) {
-    if (p.open) { p.mesh = null; continue; }
-    setStatus(`Simplifying ${p.fileName}…`);
-    try {
-      p.mesh = await simplifyMesh(p.raw, state.tolerance);
-    } catch (e) {
-      p.mesh = null;
-      p.error = e.message;
+// Match dropped files to parts by shared words in the file names.
+function matchFiles(files) {
+  const words = s => new Set(s.toLowerCase().replace(/\.stl$/, '').split(/[^a-z]+/).filter(w => w.length > 1));
+  const parts = usableParts();
+  const pairs = [];
+  const used = new Set();
+  for (const file of files) {
+    const fw = words(file.name);
+    let best = null, bestScore = -1;
+    for (const part of parts) {
+      if (used.has(part.id)) continue;
+      const pw = new Set([...words(part.fileName), ...words(part.name)]);
+      const score = [...fw].filter(w => pw.has(w)).length;
+      if (score > bestScore) { best = part; bestScore = score; }
     }
+    if (best) { used.add(best.id); pairs.push([best, file]); }
   }
-  suggest();
-  setStatus('');
+  return pairs;
 }
 
 function usableParts() { return state.parts.filter(p => p.mesh); }
 
-function suggest() {
-  const parts = usableParts();
-  if (!parts.length) { state.params = []; renderAll(); return; }
-  const { params } = suggestModel(parts.map(p => ({ name: p.name, mesh: p.mesh })));
-  state.params = params.map(p => ({ ...p, enabled: true, preview: p.base }));
+// ---------- parameters ----------
+
+function addParam(init = {}) {
+  const n = state.params.length + 1;
+  const param = {
+    id: nextId++, name: init.name ?? `value_${n}`, base: init.base ?? null, variant: init.variant ?? null,
+    min: null, max: null, step: null, rangeEdited: false, preview: null, slots: {},
+  };
+  state.params.push(param);
   renderAll();
-  viewer.reset();
-  updateView();
+  return param;
 }
 
-// ---------- validation ----------
+const learnedSlots = param => usableParts()
+  .map(part => ({ part, slot: param.slots[part.id] }))
+  .filter(({ slot }) => slot?.status === 'done' && slot.learned.fit.max <= BAD_FIT);
 
-function linkedMeshes(param) {
-  return usableParts().filter(p => param.parts.includes(p.name)).map(p => p.mesh);
+const valuesSet = p => Number.isFinite(p.base) && Number.isFinite(p.variant) && p.base !== p.variant;
+
+function niceStep(delta) {
+  const d = Math.abs(delta);
+  return d >= 10 ? 0.5 : d >= 1 ? 0.1 : d >= 0.1 ? 0.01 : 0.001;
 }
+
+// Range of s (0 = default export, 1 = changed export) where no part folds.
+function safeAmounts(param, keep = KEEP) {
+  let lo = -Infinity, hi = Infinity;
+  for (const { slot } of learnedSlots(param)) {
+    const [a, b] = safeRange(slot.learned.tables, slot.learned.delta, keep);
+    lo = Math.max(lo, a); hi = Math.min(hi, b);
+  }
+  return [lo, hi];
+}
+
+// Default Customizer range: as far as the model can go without folding, up to 2x the example
+// change below the default and 3x above it.
+function suggestRange(param) {
+  if (param.rangeEdited || !valuesSet(param) || !learnedSlots(param).length) return;
+  const d = param.variant - param.base;
+  const step = niceStep(d);
+  const [lo, hi] = safeAmounts(param, SUGGEST_KEEP);
+  const sLo = Math.max(lo, -2), sHi = Math.min(hi, 3);
+  let a = param.base + sLo * d, b = param.base + sHi * d;
+  if (a > b) [a, b] = [b, a];
+  const round = (v, f) => +(f(v / step) * step).toFixed(6);
+  param.step = step;
+  param.min = round(a, Math.ceil);
+  param.max = round(b, Math.floor);
+  if (param.preview === null) param.preview = param.base;
+}
+
+const amount = (param, value) => (value - param.base) / (param.variant - param.base);
 
 function problems(param) {
   const out = [];
-  const z = param.zone;
-  if (!(z.b > z.a)) out.push({ level: 'error', text: 'The zone end must be after its start.' });
-  if (param.min <= param.base - (z.b - z.a)) {
-    out.push({ level: 'error', text: `Minimum must be above ${fmt(param.base - (z.b - z.a))} or the zone collapses.` });
+  const err = text => out.push({ level: 'error', text });
+  const warn = text => out.push({ level: 'warn', text });
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(param.name)) err('The name can only use letters, digits and _, and cannot start with a digit.');
+  if (state.params.some(q => q !== param && q.name === param.name)) err('Another value has the same name.');
+  if (!valuesSet(param)) err(param.base === param.variant && Number.isFinite(param.base)
+    ? 'The default and changed values are the same.' : 'Enter the default value and the changed value.');
+  const slots = Object.values(param.slots);
+  if (!slots.length) err('Add the changed export of at least one part.');
+  if (slots.some(s => s.status === 'learning')) err('Still comparing the exports…');
+  for (const part of usableParts()) {
+    const s = param.slots[part.id];
+    if (s?.status === 'error') err(`${part.name}: ${s.fileName} ${s.error}`);
+    if (s?.status === 'done' && s.learned.fit.max > BAD_FIT) {
+      err(`${part.name}: the changed export can't be reached by moving and stretching the default one ` +
+        `(off by up to ${fmt(s.learned.fit.max)} mm). This happens when a value changes how many of something ` +
+        'there are, rotates or bends something, or the files are different models.');
+    } else if (s?.status === 'done' && s.learned.fit.max > GOOD_FIT) {
+      warn(`${part.name}: close but not exact (off by up to ${fmt(s.learned.fit.max)} mm). ` +
+        'Check the preview, especially at the ends of the range.');
+    }
   }
-  if (!(param.max > param.min)) out.push({ level: 'error', text: 'Maximum must be above minimum.' });
-  if (!(param.step > 0)) out.push({ level: 'error', text: 'Step must be above 0.' });
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(param.name)) out.push({ level: 'error', text: 'Name: letters, digits and _ only, not starting with a digit.' });
-  else if (state.params.some(q => q !== param && q.enabled && q.name === param.name)) out.push({ level: 'error', text: 'Another size uses this name.' });
-  else if (usableParts().some(p => p.name === param.name || param.name.startsWith(p.name + '_'))) {
-    out.push({ level: 'error', text: 'Name clashes with a part name.' });
+  if (valuesSet(param) && learnedSlots(param).length && [param.min, param.max, param.step].every(Number.isFinite)) {
+    if (!(param.min < param.max) || param.step <= 0) err('The range needs min < max and a positive step.');
+    else if (param.min > param.base || param.max < param.base) err('The range must include the default value.');
+    else {
+      const [lo, hi] = safeAmounts(param);
+      const sMin = Math.min(amount(param, param.min), amount(param, param.max));
+      const sMax = Math.max(amount(param, param.min), amount(param, param.max));
+      if (sMin < lo - 1e-9 || sMax > hi + 1e-9) {
+        const v = s => fmt(param.base + s * (param.variant - param.base));
+        const [a, b] = [v(lo), v(hi)].map(Number).sort((x, y) => x - y);
+        err(`Parts would fold inside out outside ${Number.isFinite(a) ? a : '−∞'} to ${Number.isFinite(b) ? b : '∞'}. Narrow the range.`);
+      }
+    }
   }
-  const inside = t => param.ranges.some(r => t >= r.lo && t <= r.hi);
-  if (!inside(z.a) || !inside(z.b)) {
-    out.push({ level: 'warn', text: 'A zone edge is outside the green ranges, so the shape will bend there.' });
-  }
-  if (!param.parts.length) out.push({ level: 'error', text: 'Pick at least one part.' });
   return out;
 }
 
-// ---------- rendering the panel ----------
+// Parameters that change the same part can fold it together even when each is safe alone:
+// check every gap at the worst corner of all the ranges.
+function comboProblems(params) {
+  const out = [];
+  for (const part of usableParts()) {
+    const ps = params.filter(p => p.slots[part.id]?.status === 'done');
+    if (ps.length < 2) continue;
+    const ranges = ps.map(p => [amount(p, p.min), amount(p, p.max)]);
+    let bad = false;
+    for (let k = 0; k < 3 && !bad; k++) {
+      const t = part.tables[k];
+      for (let i = 0; i + 1 < t.length; i++) {
+        const g = t[i + 1] - t[i];
+        let worst = g;
+        ps.forEach((p, j) => {
+          const d = p.slots[part.id].learned.delta[k];
+          const dg = d[i + 1] - d[i];
+          worst += Math.min(ranges[j][0] * dg, ranges[j][1] * dg);
+        });
+        if (worst < KEEP * g) { bad = true; break; }
+      }
+    }
+    if (bad) out.push(`${part.name} folds when ${ps.map(p => p.name).join(', ')} are all near the ends of their ranges. Narrow one of the ranges.`);
+  }
+  return out;
+}
+
+// ---------- rendering ----------
 
 function renderAll() {
   renderParts();
   renderParams();
   renderExport();
+  updateView();
 }
 
 function renderParts() {
+  $('empty').hidden = state.parts.length > 0;
   const ul = $('parts');
-  ul.replaceChildren();
-  state.parts.forEach((p, i) => {
+  ul.innerHTML = '';
+  for (const part of state.parts) {
     const li = document.createElement('li');
-    const name = Object.assign(document.createElement('input'), { type: 'text', value: p.name, title: 'Part name' });
-    name.addEventListener('change', () => {
-      const clean = name.value.trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^(\d)/, '_$1') || 'part';
-      const next = uniqueName(clean, p);
-      for (const q of state.params) q.parts = q.parts.map(n => (n === p.name ? next : n));
-      p.name = next;
+    const meta = part.error
+      ? `<span class="bad">${escapeHTML(part.fileName)} ${escapeHTML(part.error)}</span>`
+      : `${escapeHTML(part.fileName)} · ${part.mesh.faces.length / 3} triangles`;
+    li.innerHTML = `<input type="text" value="${escapeHTML(part.name)}" aria-label="Part name" ${part.error ? 'disabled' : ''}>
+      <span class="meta">${meta}</span><button type="button" title="Remove">×</button>`;
+    const input = li.querySelector('input');
+    input.addEventListener('change', () => {
+      const v = input.value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+      part.name = uniquePartName(/^[a-z_]/.test(v) ? v : `part_${v}`, part);
       renderAll();
     });
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    if (p.open) {
-      meta.innerHTML = `<span class="bad">Not watertight (${p.open} open edges), skipped</span>`;
-    } else if (p.error) {
-      meta.innerHTML = `<span class="bad">${escapeHTML(p.error)}</span>`;
-    } else if (p.mesh) {
-      const [lo, hi] = bounds(p.raw);
-      const size = [0, 1, 2].map(a => fmt(hi[a] - lo[a])).join(' × ');
-      meta.textContent = `${size} mm · ${p.raw.faces.length / 3} → ${p.mesh.faces.length / 3} triangles${i === 0 ? ' · reference' : ''}`;
-    } else {
-      meta.textContent = 'processing…';
-    }
-    const up = Object.assign(document.createElement('button'), { type: 'button', textContent: '↑', title: 'Make this the reference part' });
-    up.hidden = i === 0;
-    up.addEventListener('click', () => { state.parts.unshift(...state.parts.splice(i, 1)); suggest(); });
-    const del = Object.assign(document.createElement('button'), { type: 'button', textContent: '×', title: 'Remove' });
-    del.addEventListener('click', () => { state.parts.splice(i, 1); $('empty').hidden = state.parts.length > 0; suggest(); });
-    li.append(name, meta, up, del);
-    ul.append(li);
-  });
-  $('parts-hint').hidden = state.parts.length < 2;
+    li.querySelector('button').addEventListener('click', () => {
+      state.parts = state.parts.filter(p => p !== part);
+      for (const param of state.params) delete param.slots[part.id];
+      viewer.reset();
+      renderAll();
+    });
+    ul.appendChild(li);
+  }
+  $('params-section').hidden = !usableParts().length;
+  if (usableParts().length && !state.params.length) addParam();
 }
 
 function renderParams() {
   const box = $('params');
-  box.replaceChildren();
-  $('params-section').hidden = !state.params.length;
-  for (const param of state.params) box.append(paramCard(param));
+  box.innerHTML = '';
+  for (const param of state.params) box.appendChild(paramCard(param));
 }
 
 function paramCard(param) {
   const card = document.createElement('div');
-  card.className = 'param' + (param.enabled ? '' : ' off');
-  const axis = AXES[param.zone.axis];
+  card.className = 'param';
+  card.dataset.id = param.id;
+  const num = v => (v === null || v === undefined ? '' : v);
   card.innerHTML = `
     <div class="head">
-      <input type="checkbox" data-k="enabled" ${param.enabled ? 'checked' : ''} title="Include this size">
-      <span class="axis ${axis}">${axis.toUpperCase()}</span>
-      <input type="text" data-k="name" value="${escapeHTML(param.name)}" title="OpenSCAD variable name">
-      <span class="hint">default ${fmt(param.base)} mm</span>
+      <input type="text" class="name" value="${escapeHTML(param.name)}" aria-label="Value name">
+      <button type="button" class="remove" title="Remove this value">×</button>
     </div>
-    <div class="body">
-      <svg class="strip" viewBox="0 0 360 34" preserveAspectRatio="none"></svg>
+    <div class="grid two">
+      <label>Default value<input type="number" class="base" step="any" value="${num(param.base)}"></label>
+      <label>Changed value<input type="number" class="variant" step="any" value="${num(param.variant)}"></label>
+    </div>
+    <p class="hint">Changed exports, one per part. Leave a part empty if this value doesn't change it.</p>
+    <div class="slots"></div>
+    <div class="range" hidden>
       <div class="grid">
-        <label>Zone start<input type="number" data-k="a" step="0.1" value="${fmt(param.zone.a)}"></label>
-        <label>Zone end<input type="number" data-k="b" step="0.1" value="${fmt(param.zone.b)}"></label>
-        <label>Grows from<select data-k="anchor">
-          <option value="0.5">both ends</option>
-          <option value="0">high end (low fixed)</option>
-          <option value="1">low end (high fixed)</option>
-        </select></label>
-        <label>Min<input type="number" data-k="min" step="any" value="${fmt(param.min)}"></label>
-        <label>Max<input type="number" data-k="max" step="any" value="${fmt(param.max)}"></label>
-        <label>Step<input type="number" data-k="step" step="any" value="${fmt(param.step)}"></label>
+        <label>Min<input type="number" class="min" step="any" value="${num(param.min)}"></label>
+        <label>Max<input type="number" class="max" step="any" value="${num(param.max)}"></label>
+        <label>Step<input type="number" class="step" step="any" value="${num(param.step)}"></label>
       </div>
-      <div class="links">Changes:</div>
-      <div class="preview">Preview <input type="range" step="any"> <output></output></div>
-      <div class="msgs"></div>
-    </div>`;
-  card.querySelector('select').value = String(param.zone.anchor);
+      <div class="preview"><span>Preview</span><input type="range"><output></output></div>
+    </div>
+    <div class="msgs"></div>`;
+  const slots = card.querySelector('.slots');
+  for (const part of usableParts()) slots.appendChild(slotRow(param, part));
 
-  card.querySelectorAll('[data-k]').forEach(el => el.addEventListener('change', () => {
-    const k = el.dataset.k;
-    if (k === 'enabled') param.enabled = el.checked;
-    else if (k === 'name') param.name = el.value.trim();
-    else if (k === 'a' || k === 'b' || k === 'anchor') param.zone[k] = +el.value;
-    else param[k] = +el.value;
-    if (k === 'min' || k === 'max') param.preview = clamp(param.preview, param.min, param.max);
-    refreshCard(card, param);
-    updateView();
-    renderExport();
-  }));
-
-  const links = card.querySelector('.links');
-  for (const p of usableParts()) {
-    const label = document.createElement('label');
-    label.innerHTML = `<input type="checkbox" ${param.parts.includes(p.name) ? 'checked' : ''}> ${escapeHTML(p.name)}`;
-    label.querySelector('input').addEventListener('change', e => {
-      param.parts = e.target.checked
-        ? usableParts().map(q => q.name).filter(n => n === p.name || param.parts.includes(n))
-        : param.parts.filter(n => n !== p.name);
-      const meshes = linkedMeshes(param);
-      param.ranges = meshes.length ? cleanRanges(meshes, param.zone.axis) : [];
-      refreshCard(card, param);
-      updateView();
-      renderExport();
-    });
-    links.append(label);
-  }
-
-  const range = card.querySelector('input[type=range]');
-  range.addEventListener('input', () => {
-    param.preview = +range.value;
-    card.querySelector('output').textContent = `${fmt(param.preview)} mm`;
-    updateView();
+  // Dropping several files on the card matches them to parts by name.
+  card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('over'); });
+  card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) card.classList.remove('over'); });
+  card.addEventListener('drop', e => {
+    e.preventDefault();
+    card.classList.remove('over');
+    const files = [...e.dataTransfer.files].filter(f => /\.stl$/i.test(f.name));
+    const target = e.target.closest('.slot');
+    if (target && files.length === 1) {
+      const part = state.parts.find(p => p.id === +target.dataset.part);
+      if (part) setSlot(param, part, files[0]);
+      return;
+    }
+    for (const [part, file] of matchFiles(files)) setSlot(param, part, file);
   });
 
-  setupStrip(card, param);
+  const name = card.querySelector('.name');
+  name.addEventListener('change', () => { param.name = name.value.trim(); renderParams(); renderExport(); });
+  card.querySelector('.remove').addEventListener('click', () => {
+    state.params = state.params.filter(p => p !== param);
+    renderAll();
+  });
+  for (const key of ['base', 'variant']) {
+    const input = card.querySelector(`.${key}`);
+    input.addEventListener('change', () => {
+      param[key] = input.value === '' ? null : +input.value;
+      if (!param.rangeEdited) { param.preview = null; suggestRange(param); }
+      renderParams(); renderExport(); updateView();
+    });
+  }
+  for (const key of ['min', 'max', 'step']) {
+    const input = card.querySelector(`.${key}`);
+    input.addEventListener('change', () => {
+      param[key] = input.value === '' ? null : +input.value;
+      param.rangeEdited = true;
+      param.preview = clamp(param.preview ?? param.base, param.min, param.max);
+      refreshCard(card, param); renderExport(); updateView();
+    });
+  }
+  const slider = card.querySelector('input[type=range]');
+  slider.addEventListener('input', () => {
+    param.preview = +slider.value;
+    card.querySelector('output').textContent = fmt(param.preview);
+    updateView();
+  });
   refreshCard(card, param);
   return card;
 }
 
+function slotRow(param, part) {
+  const row = document.createElement('label');
+  row.className = 'slot';
+  row.dataset.part = part.id;
+  row.innerHTML = `<input type="file" accept=".stl" hidden><span class="pname">${escapeHTML(part.name)}</span>
+    <span class="file"></span><span class="state"></span>`;
+  row.querySelector('input').addEventListener('change', e => {
+    if (e.target.files[0]) setSlot(param, part, e.target.files[0]);
+  });
+  fillSlot(row, param, part);
+  return row;
+}
+
+function fillSlot(row, param, part) {
+  const s = param.slots[part.id];
+  const file = row.querySelector('.file'), st = row.querySelector('.state');
+  row.classList.remove('good', 'warn', 'bad');
+  if (!s) { file.innerHTML = '<u>choose file</u> or drop it here'; st.textContent = 'not changed'; return; }
+  file.textContent = s.fileName;
+  if (s.status === 'learning') { st.textContent = `comparing ${Math.round(s.progress * 100)}%`; return; }
+  if (s.status === 'error') { row.classList.add('bad'); st.textContent = 'error'; return; }
+  const fit = s.learned.fit.max;
+  row.classList.add(fit <= GOOD_FIT ? 'good' : fit <= BAD_FIT ? 'warn' : 'bad');
+  st.textContent = fit <= BAD_FIT ? `matches within ${fmt(Math.max(fit, 0.001))} mm` : `doesn't match (${fmt(fit)} mm)`;
+}
+
+function refreshSlot(param, part) {
+  const row = document.querySelector(`.param[data-id="${param.id}"] .slot[data-part="${part.id}"]`);
+  if (row) fillSlot(row, param, part);
+}
+
 function refreshCard(card, param) {
-  card.classList.toggle('off', !param.enabled);
-  card.querySelector('[data-k=a]').value = fmt(param.zone.a);
-  card.querySelector('[data-k=b]').value = fmt(param.zone.b);
-  const range = card.querySelector('input[type=range]');
-  Object.assign(range, { min: param.min, max: param.max });
-  range.value = param.preview;
-  card.querySelector('output').textContent = `${fmt(param.preview)} mm`;
-  drawStrip(card, param);
-  const msgs = card.querySelector('.msgs');
-  msgs.replaceChildren(...problems(param).map(m => Object.assign(document.createElement('div'), {
-    className: `msg ${m.level}`, textContent: m.text,
-  })));
-}
-
-// The strip shows the axis span of the linked parts: green = clean cut, shaded = zone.
-function stripDomain(param) {
-  const meshes = linkedMeshes(param);
-  if (!meshes.length) return [0, 1];
-  let lo = Infinity, hi = -Infinity;
-  for (const m of meshes) {
-    const [l, h] = bounds(m);
-    lo = Math.min(lo, l[param.zone.axis]);
-    hi = Math.max(hi, h[param.zone.axis]);
+  const ready = valuesSet(param) && learnedSlots(param).length > 0 &&
+    [param.min, param.max, param.step].every(Number.isFinite);
+  card.querySelector('.range').hidden = !ready;
+  if (ready) {
+    const slider = card.querySelector('input[type=range]');
+    slider.min = param.min; slider.max = param.max; slider.step = param.step;
+    slider.value = param.preview ?? param.base;
+    card.querySelector('output').textContent = fmt(+slider.value);
   }
-  return [lo, hi];
+  const msgs = card.querySelector('.msgs');
+  msgs.innerHTML = '';
+  for (const m of problems(param)) {
+    if (m.text.startsWith('Still comparing')) continue;
+    const p = document.createElement('p');
+    p.className = `msg ${m.level}`;
+    p.textContent = m.text;
+    msgs.appendChild(p);
+  }
 }
 
-function drawStrip(card, param) {
-  const svg = card.querySelector('svg');
-  const [lo, hi] = stripDomain(param);
-  const X = t => ((t - lo) / (hi - lo || 1)) * 360;
-  const z = param.zone;
-  svg.innerHTML = `
-    <rect class="blocked" x="0" y="6" width="360" height="14" rx="3"></rect>
-    ${param.ranges.map(r => `<rect class="clean" x="${X(r.lo)}" y="6" width="${Math.max(1, X(r.hi) - X(r.lo))}" height="14"></rect>`).join('')}
-    <rect class="zone" x="${X(z.a)}" y="2" width="${Math.max(0, X(z.b) - X(z.a))}" height="22"></rect>
-    <rect class="handle" data-h="a" x="${X(z.a) - 3}" y="0" width="6" height="26" rx="2"></rect>
-    <rect class="handle" data-h="b" x="${X(z.b) - 3}" y="0" width="6" height="26" rx="2"></rect>
-    <text x="0" y="33">${fmt(lo)}</text>
-    <text x="360" y="33" text-anchor="end">${fmt(hi)}</text>`;
+function readyParams() {
+  return state.params.filter(p => !problems(p).some(m => m.level === 'error'));
 }
 
-function setupStrip(card, param) {
-  const svg = card.querySelector('svg');
-  let drag = null;
-  svg.addEventListener('pointerdown', e => {
-    const h = e.target.dataset?.h;
-    if (!h) return;
-    drag = h;
-    svg.setPointerCapture(e.pointerId);
-  });
-  svg.addEventListener('pointermove', e => {
-    if (!drag) return;
-    const [lo, hi] = stripDomain(param);
-    const rect = svg.getBoundingClientRect();
-    let t = lo + clamp((e.clientX - rect.left) / rect.width, 0, 1) * (hi - lo);
-    // Snap into a clean range when close to one.
-    const snap = (hi - lo) * 0.01;
-    for (const r of param.ranges) {
-      if (t < r.lo && r.lo - t < snap) t = r.lo + 0.05;
-      if (t > r.hi && t - r.hi < snap) t = r.hi - 0.05;
-    }
-    param.zone[drag] = Math.round(t * 100) / 100;
-    refreshCard(card, param);
-    updateView();
-  });
-  const end = () => { if (drag) { drag = null; renderExport(); } };
-  svg.addEventListener('pointerup', end);
-  svg.addEventListener('pointercancel', end);
+function renderExport() {
+  const parts = usableParts();
+  $('export-section').hidden = !parts.length;
+  if (!parts.length) return;
+  if (!$('title').value) $('title').value = defaultTitle();
+  const msgs = [];
+  const blocked = state.params.filter(p => problems(p).some(m => m.level === 'error'));
+  for (const p of blocked) msgs.push(`“${p.name}” isn't ready yet, so it is left out.`);
+  const ready = readyParams();
+  const combos = comboProblems(ready);
+  msgs.push(...combos);
+  $('export-msgs').innerHTML = msgs.map(m => `<p class="msg ${combos.includes(m) ? 'error' : 'warn'}">${escapeHTML(m)}</p>`).join('');
+  $('export').disabled = !ready.length || combos.length > 0;
+  $('export-info').textContent = ready.length
+    ? `${ready.length} value${ready.length > 1 ? 's' : ''} and ${parts.length} part${parts.length > 1 ? 's' : ''}.` : '';
 }
 
-// ---------- preview ----------
+function defaultTitle() {
+  const n = usableParts().map(p => p.name).join(' + ');
+  return n ? `Parametric ${n}` : 'Parametric model';
+}
 
-function activeParams() {
-  return state.params.filter(p => p.enabled && !problems(p).some(m => m.level === 'error'));
+// ---------- preview and export ----------
+
+function previewMesh(part, params) {
+  const ps = params.filter(p => p.slots[part.id]?.status === 'done');
+  if (!ps.length) return part.mesh;
+  return applyChanges(part.mesh, part, ps.map(p => amount(p, p.preview ?? p.base)), ps.map(p => p.slots[part.id].learned.delta));
 }
 
 function updateView() {
-  const parts = usableParts();
-  const params = activeParams();
+  const params = readyParams();
   let cursor = null;
-  const shown = parts.map(p => {
-    const changes = params.filter(q => q.parts.includes(p.name)).map(q => ({ zone: q.zone, d: q.preview - q.base }));
-    const mesh = stretchMesh(p.mesh, changes);
+  const shown = usableParts().map(part => {
+    const mesh = previewMesh(part, params);
     const [lo, hi] = bounds(mesh);
     const offsetX = cursor === null ? 0 : cursor - lo[0];
     cursor = (cursor === null ? hi[0] : cursor + hi[0] - lo[0]) + SPACING;
     return { mesh, offsetX };
   });
-  const slabs = [];
-  for (const q of params) {
-    parts.forEach((p, i) => {
-      if (!q.parts.includes(p.name)) return;
-      const d = q.preview - q.base;
-      slabs.push({ axis: q.zone.axis, lo: mapValue(q.zone.a, q.zone, d), hi: mapValue(q.zone.b, q.zone, d), part: i });
-    });
-  }
-  viewer.show(shown, slabs);
-}
-
-// ---------- export ----------
-
-function renderExport() {
-  const ok = usableParts().length > 0;
-  $('export-section').hidden = !ok;
-  if (!ok) return;
-  if (!$('title').value) $('title').value = state.parts[0].fileName.replace(/\.stl$/i, '');
-  const bad = state.params.filter(p => p.enabled && problems(p).some(m => m.level === 'error'));
-  $('export').disabled = bad.length > 0;
-  $('export-info').textContent = bad.length
-    ? `Fix ${bad.map(p => p.name || AXES[p.zone.axis]).join(', ')} first.`
-    : `${activeParams().length} size${activeParams().length === 1 ? '' : 's'}, ${usableParts().length} part${usableParts().length === 1 ? '' : 's'}.`;
+  viewer.show(shown);
 }
 
 function buildScad() {
-  return exportScad({
-    title: $('title').value || 'Parametric model',
-    parts: usableParts().map(p => ({ name: p.name, mesh: p.mesh })),
-    params: activeParams(),
+  const params = readyParams();
+  return exportLearnedScad({
+    title: $('title').value.trim() || defaultTitle(),
     spacing: SPACING,
+    params: params.map(p => ({ name: p.name, base: p.base, variant: p.variant, min: p.min, max: p.max, step: p.step })),
+    parts: usableParts().map(part => ({
+      name: part.name, mesh: part.mesh, tables: part.tables, index: part.index,
+      deltas: Object.fromEntries(params.filter(p => p.slots[part.id]?.status === 'done')
+        .map(p => [p.name, p.slots[part.id].learned.delta])),
+    })),
   });
 }
 
 $('export').addEventListener('click', () => {
   let scad;
   try { scad = buildScad(); } catch (e) { alert(e.message); return; }
-  const name = ($('title').value || 'model').replace(/[^\w.-]+/g, '_') + '.scad';
+  const name = ($('title').value.trim() || 'model').replace(/[^\w-]+/g, '_').toLowerCase();
   const url = URL.createObjectURL(new Blob([scad], { type: 'text/plain' }));
-  Object.assign(document.createElement('a'), { href: url, download: name }).click();
+  const a = Object.assign(document.createElement('a'), { href: url, download: `${name}.scad` });
+  document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  $('export-info').textContent = `Saved ${name} (${(scad.length / 1024).toFixed(0)} KB).`;
+  $('export-info').textContent = `Saved ${name}.scad (${Math.round(scad.length / 1024)} KB).`;
 });
 
-$('tolerance').addEventListener('change', async e => {
-  state.tolerance = Math.max(0, +e.target.value || 0);
-  const keep = state.params;
-  await processParts();
-  // Keep the user's zone edits when only the mesh detail changed.
-  for (const p of state.params) {
-    const old = keep.find(k => k.zone.axis === p.zone.axis);
-    if (old) Object.assign(p, { ...old, ranges: p.ranges });
-  }
-  renderAll();
-  updateView();
-});
+$('add-param').addEventListener('click', () => addParam());
 
-// ---------- inputs ----------
+// ---------- file input and drag and drop ----------
 
-$('files').addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+$('files').addEventListener('change', e => { addParts(e.target.files); e.target.value = ''; });
 const drop = $('drop');
-for (const ev of ['dragenter', 'dragover']) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); });
-for (const ev of ['dragleave', 'drop']) drop.addEventListener(ev, () => drop.classList.remove('over'));
-drop.addEventListener('drop', e => { e.preventDefault(); addFiles(e.dataTransfer.files); });
-document.body.addEventListener('dragover', e => e.preventDefault());
-document.body.addEventListener('drop', e => { e.preventDefault(); if (e.target !== drop) addFiles(e.dataTransfer.files); });
+for (const el of [drop, $('view')]) {
+  el.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  el.addEventListener('dragleave', () => drop.classList.remove('over'));
+  el.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addParts(e.dataTransfer.files); });
+}
 
+// Sample: a box and lid exported from Revit at 35 x 105 x 30, and one changed export per value.
 $('sample').addEventListener('click', async () => {
   setStatus('Loading sample…');
-  const files = await Promise.all(['container-box.stl', 'container-lid.stl'].map(async n => {
-    const res = await fetch(`samples/${n}`);
-    return new File([await res.arrayBuffer()], n);
-  }));
-  state.parts = [];
-  await addFiles(files);
-  $('title').value = 'Container';
+  const get = async n => new File([await (await fetch(`samples/${n}`)).arrayBuffer()], n);
+  try {
+    state.parts = []; state.params = [];
+    await addParts([await get('box.stl'), await get('lid.stl')]);
+    state.params = [];
+    const [box, lid] = state.parts;
+    for (const [name, base, variant, parts] of [
+      ['width', 35, 50, [box, lid]], ['length', 105, 136.5, [box, lid]], ['height', 30, 40, [box]],
+    ]) {
+      const param = addParam({ name, base, variant });
+      for (const part of parts) setSlot(param, part, await get(`${part.name}_${name}_${variant}.stl`));
+    }
+    $('title').value = 'Parametric container';
+  } catch (e) {
+    alert(`Could not load the sample: ${e.message}`);
+  }
+  setStatus('');
 });
-
-// ---------- helpers ----------
 
 function setStatus(text) { $('status').textContent = text; }
 function fmt(v) { return String(Math.round(v * 1000) / 1000); }
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 function escapeHTML(s) { return String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`); }
-
-window.solidToScad = { state, buildScad }; // handy for debugging and the smoke test
