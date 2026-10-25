@@ -27,9 +27,9 @@ You show the app how your model changes, and it learns the rule:
    Values between and beyond the examples are linear blends of the learned change, and
    values combine by adding their changes.
 
-Checked against a box and lid exported from a parametric CAD program: learned from the
-default and the program's own resized export, the result matches within 0.01 mm, and the `.scad` rendered in
-OpenSCAD matches within 0.05 mm.
+The tests build a box and lid in code at several sizes, the way a parametric CAD program
+would export them. Learned from the default and a changed export, the result matches within
+0.03 mm, and the `.scad` rendered in OpenSCAD matches within 0.05 mm.
 
 **What it can't learn:** values that change how many of something there are (an array
 or a number of slots), and changes that aren't along X, Y or Z (rotations, bending,
@@ -41,7 +41,7 @@ twisting). The fit check catches these instead of exporting something wrong.
 the default values. A part can hold several bodies. Drop the files on the app. Each one
 becomes a part, and you can rename it (the name shows up in the Customizer's part list).
 
-![Default model loaded](docs/images/1-default-model.png)
+![Default model loaded](docs/images/walkthrough-1-model.png)
 
 **2. Add a value.** For each value people should be able to set, export every part
 again with *only that value changed*, then:
@@ -56,11 +56,11 @@ Each file shows how closely the learned change reproduces it. The app suggests a
 Customizer range that can't fold the model inside out, and the preview slider shows
 the result.
 
-![A value learned from two exports](docs/images/2-value-learned.png)
+![A value learned from two exports](docs/images/walkthrough-2-value.png)
 
 If a file doesn't match, that value is left out of the export and the card says why:
 
-![A file that doesn't match](docs/images/3-no-match.png)
+![A file that doesn't match](docs/images/walkthrough-3-no-match.png)
 
 **3. Export.** Give it a title and download the `.scad`. On MakerWorld, upload it to
 the Parametric Model Maker. Keep it to a few hundred KB, since MakerWorld has no
@@ -90,10 +90,6 @@ npm run build   # writes the static site to _site/
 The `pages` workflow deploys `main` to GitHub Pages on every push. There is no bundler.
 The app is plain ES modules: `src/core/` is the library (used by the app, the CLI and
 the tests), and `web/` is the page.
-
-The sample is a box and lid exported from a parametric CAD program. Its single-value
-exports (width, length and height changed one at a time) were made with the zone stretch
-that matches the program's own resized export, see `test/cad.test.js`.
 
 ## Command line
 

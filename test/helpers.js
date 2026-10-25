@@ -1,8 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { parseSTL, indexMesh } from '../src/core/index.js';
-
-export const load = name => indexMesh(parseSTL(readFileSync(new URL(`./fixtures/${name}`, import.meta.url))));
-
 // Distance from point p to triangle abc (Ericson, Real-Time Collision Detection 5.1.5).
 function pointTri(p, a, b, c) {
   const sub = (u, v) => [u[0] - v[0], u[1] - v[1], u[2] - v[2]];

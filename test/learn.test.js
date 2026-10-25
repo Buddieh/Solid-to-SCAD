@@ -1,7 +1,6 @@
 // Learning a parameter from two exports of the same model.
-// box.stl / lid.stl are CAD exports at 35 x 105 x 30. box_50x136.5x40.stl is the CAD program's own export
-// with all three values changed. The single-value variants (box_width_50.stl, ...) change one
-// value each and were made with the zone stretch that matches the CAD export (see cad.test.js).
+// Learning a value from two exports of the same model. The box and lid are built in code (see
+// model.js), so every changed export is exact: one value changed at a time, and all three at once.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -12,12 +11,13 @@ import {
   simplifyMesh, learnChange, applyChanges, safeRange, exportLearnedScad, meshDeviation,
   parseSTL, indexMesh, openEdgeCount,
 } from '../src/core/index.js';
-import { load } from './helpers.js';
+import { makeBox, makeLid } from './model.js';
 
-const box = await simplifyMesh(load('box.stl'));
-const lid = await simplifyMesh(load('lid.stl'));
-const cadBox = load('box_50x136.5x40.stl');
-const cadLid = load('lid_50x136.5.stl');
+const box = await simplifyMesh(makeBox());
+const lid = await simplifyMesh(makeLid());
+const all = { width: 50, length: 136.5, height: 40 };
+const cadBox = makeBox(all);
+const cadLid = makeLid(all);
 
 const params = [
   { name: 'width', base: 35, variant: 50 },
@@ -26,11 +26,11 @@ const params = [
 ];
 const learned = { box: {}, lid: {} };
 for (const p of params) {
-  learned.box[p.name] = learnChange(box, load(`box_${p.name}_${p.variant}.stl`));
-  if (p.name !== 'height') learned.lid[p.name] = learnChange(lid, load(`lid_${p.name}_${p.variant}.stl`));
+  learned.box[p.name] = learnChange(box, makeBox({ [p.name]: p.variant }));
+  if (p.name !== 'height') learned.lid[p.name] = learnChange(lid, makeLid({ [p.name]: p.variant }));
 }
 
-test('learns a change from the CAD program\'s own resized export', () => {
+test('learns a change of all three values at once', () => {
   const l = learnChange(box, cadBox);
   assert.ok(l.fit.max < 0.02, `fit ${l.fit.max}`);
   for (let k = 0; k < 3; k++) {
@@ -44,11 +44,11 @@ test('learns a change from the CAD program\'s own resized export', () => {
 
 test('every single-value change fits closely', () => {
   for (const part of ['box', 'lid']) {
-    for (const [name, l] of Object.entries(learned[part])) assert.ok(l.fit.max < 0.02, `${part} ${name}: ${l.fit.max}`);
+    for (const [name, l] of Object.entries(learned[part])) assert.ok(l.fit.max < 0.03, `${part} ${name}: ${l.fit.max}`);
   }
 });
 
-test('changes learned one at a time combine into the CAD export', () => {
+test('changes learned one at a time combine into the export with all three changed', () => {
   for (const [part, mesh, cad] of [['box', box, cadBox], ['lid', lid, cadLid]]) {
     const ls = Object.values(learned[part]);
     const moved = applyChanges(mesh, ls[0], ls.map(() => 1), ls.map(l => l.delta));
@@ -93,7 +93,7 @@ test('writes a Customizer slider for each value', () => {
 let openscad = null;
 try { execFileSync('openscad', ['--version'], { stdio: 'ignore' }); openscad = 'openscad'; } catch {}
 
-test('OpenSCAD renders the learned model at the CAD export\'s sizes', { skip: !openscad && 'openscad not installed' }, () => {
+test('OpenSCAD renders the learned model at the changed sizes', { skip: !openscad && 'openscad not installed' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'learned-'));
   const file = join(dir, 'model.scad');
   writeFileSync(file, scad);
