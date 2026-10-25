@@ -25,11 +25,6 @@ for (const f of ['manifold.js', 'manifold.wasm', 'LICENSE']) {
   cpSync(join(nm, 'manifold-3d', f), join(out, 'vendor/manifold', f));
 }
 
-mkdirSync(join(out, 'samples'), { recursive: true });
-for (const f of ['box.stl', 'lid.stl', 'box_width_50.stl', 'lid_width_50.stl', 'box_length_136.5.stl',
-  'lid_length_136.5.stl', 'box_height_40.stl']) {
-  cpSync(join(root, 'test/fixtures', f), join(out, 'samples', f));
-}
 // Stamp the app's own files with a content hash, so a browser never mixes a cached old file
 // with new ones after a deploy (GitHub Pages lets browsers cache for 10 minutes).
 const files = dir => readdirSync(dir, { withFileTypes: true })

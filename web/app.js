@@ -516,28 +516,6 @@ for (const el of [drop, $('view')]) {
   el.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addParts(e.dataTransfer.files); });
 }
 
-// Sample: a box and lid exported from a parametric CAD program at 35 x 105 x 30, and one changed export per value.
-$('sample').addEventListener('click', async () => {
-  setStatus('Loading sample…');
-  const get = async n => new File([await (await fetch(`samples/${n}`)).arrayBuffer()], n);
-  try {
-    state.parts = []; state.params = [];
-    await addParts([await get('box.stl'), await get('lid.stl')]);
-    state.params = [];
-    const [box, lid] = state.parts;
-    for (const [name, base, variant, parts] of [
-      ['width', 35, 50, [box, lid]], ['length', 105, 136.5, [box, lid]], ['height', 30, 40, [box]],
-    ]) {
-      const param = addParam({ name, base, variant });
-      for (const part of parts) setSlot(param, part, await get(`${part.name}_${name}_${variant}.stl`));
-    }
-    $('title').value = 'Parametric container';
-  } catch (e) {
-    alert(`Could not load the sample: ${e.message}`);
-  }
-  setStatus('');
-});
-
 function setStatus(text) { $('status').textContent = text; }
 function fmt(v) { return String(Math.round(v * 1000) / 1000); }
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
