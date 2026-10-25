@@ -25,27 +25,26 @@
   <main>
     <aside id="panel">
       <section>
-        <h2>1. Parts</h2>
+        <h2>1. Default model</h2>
+        <p class="hint">Export the model at its default values. Each STL file becomes one part (a file can hold several bodies).</p>
         <label class="drop" id="drop">
           <input type="file" id="files" accept=".stl" multiple hidden>
           <span>Drop STL files here or <u>choose files</u></span>
         </label>
         <button type="button" id="sample" class="link">Try the sample box + lid</button>
         <ul id="parts"></ul>
-        <p class="hint" id="parts-hint">The first part is the reference: the sizes describe its outer dimensions.</p>
       </section>
       <section id="params-section" hidden>
-        <h2>2. Sizes</h2>
-        <p class="hint">Each size stretches the part between its two cut planes and moves the rest without changing shape. On the strip, green means a clean cut: drag the handles to move the planes. Double-click the view to re-frame it.</p>
+        <h2>2. Values</h2>
+        <p class="hint">For each value people should be able to change, export the model again with only that value changed and add those files here. The app works out what the value moves by comparing the two exports.</p>
         <div id="params"></div>
+        <button type="button" id="add-param" class="secondary">+ Add a value</button>
       </section>
       <section id="export-section" hidden>
         <h2>3. Export</h2>
         <label class="row">Title <input id="title" type="text" value=""></label>
-        <label class="row">Mesh tolerance, mm
-          <input id="tolerance" type="number" value="0.001" min="0" max="0.1" step="0.001">
-        </label>
         <button type="button" id="export" class="primary">Download .scad</button>
+        <div id="export-msgs"></div>
         <p class="hint" id="export-info"></p>
       </section>
     </aside>
