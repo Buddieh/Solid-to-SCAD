@@ -1,8 +1,11 @@
 # Solid to SCAD
 
 Turn STL files into one parametric OpenSCAD file that works in MakerWorld's
-Parametric Model Maker (the OpenSCAD Customizer). Work in progress: this is the
-core library and a command-line tool. The browser app comes next.
+Parametric Model Maker (the OpenSCAD Customizer).
+
+**Use it in the browser:** https://buddieh.github.io/Solid-to-SCAD/
+
+Everything runs on your computer; files are never uploaded.
 
 ## How it works
 
@@ -23,6 +26,18 @@ fitting. Solid to SCAD stretches instead:
 
 Checked against a box and lid exported from Revit at two sizes: the stretched
 result matches Revit's own resized export within 0.03 mm.
+
+## Web app
+
+1. Drop one or more STL files (binary or ASCII). The first one is the reference part.
+2. Check the suggested sizes. Each has a strip showing where clean cuts are (green)
+   and two handles for the zone. Pick which parts each size changes, set the
+   Customizer range, and drag the preview slider to see the result.
+3. Download the `.scad` and upload it to MakerWorld's Parametric Model Maker.
+
+Run it locally with `npm install && npm run dev`, then open http://localhost:8080.
+`npm run build` writes the static site to `_site/`. The `pages` workflow deploys it
+on every push to `main`.
 
 ## Command line
 

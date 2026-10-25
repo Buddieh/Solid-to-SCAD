@@ -48,3 +48,15 @@ test('renders in OpenSCAD at several sizes', { skip: !openscad && 'openscad not 
     }
   }
 });
+
+test('a single part exports without a part selector', { skip: !openscad && 'openscad not installed' }, () => {
+  const one = [parts[0]];
+  const { params: p1 } = suggestModel(one);
+  const text = exportScad({ parts: one, params: p1 });
+  assert.doesNotMatch(text, /^part = /m);
+  const dir = mkdtempSync(join(tmpdir(), 'stl2scad-'));
+  writeFileSync(join(dir, 'one.scad'), text);
+  execFileSync(openscad, ['-o', join(dir, 'one.stl'), '-D', 'width=60', join(dir, 'one.scad')], { stdio: 'pipe' });
+  const [lo, hi] = bounds(indexMesh(parseSTL(readFileSync(join(dir, 'one.stl')))));
+  assert.ok(Math.abs(hi[0] - lo[0] - 60) < 0.01);
+});
