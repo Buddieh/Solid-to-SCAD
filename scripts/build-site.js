@@ -25,6 +25,8 @@ for (const f of ['manifold.js', 'manifold.wasm', 'LICENSE']) {
 }
 
 mkdirSync(join(out, 'samples'), { recursive: true });
-cpSync(join(root, 'test/fixtures/box.stl'), join(out, 'samples/container-box.stl'));
-cpSync(join(root, 'test/fixtures/lid.stl'), join(out, 'samples/container-lid.stl'));
+for (const f of ['box.stl', 'lid.stl', 'box_width_50.stl', 'lid_width_50.stl', 'box_length_136.5.stl',
+  'lid_length_136.5.stl', 'box_height_40.stl']) {
+  cpSync(join(root, 'test/fixtures', f), join(out, 'samples', f));
+}
 console.log(`built ${out}`);
