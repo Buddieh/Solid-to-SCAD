@@ -9,7 +9,8 @@
 // The map is monotonic as long as the zone keeps a positive length, so triangles never fold,
 // for growing and shrinking alike. It is exact for geometry that is constant (prismatic)
 // where triangles cross a and b, and it scales features inside the zone with the part.
-// This is how Revit families resize, which is why matching Revit is the reference test.
+// This is how parametric CAD programs typically resize, which is why matching a CAD export is
+// the reference test.
 
 /** @typedef {{axis: 0|1|2, a: number, b: number, anchor: number}} Zone */
 
