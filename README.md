@@ -27,8 +27,8 @@ You show the app how your model changes, and it learns the rule:
    Values between and beyond the examples are linear blends of the learned change, and
    values combine by adding their changes.
 
-Checked against a box and lid exported from Revit: learned from the default and Revit's
-own resized export, the result matches within 0.01 mm, and the `.scad` rendered in
+Checked against a box and lid exported from a parametric CAD program: learned from the
+default and the program's own resized export, the result matches within 0.01 mm, and the `.scad` rendered in
 OpenSCAD matches within 0.05 mm.
 
 **What it can't learn:** values that change how many of something there are (an array
@@ -91,9 +91,9 @@ The `pages` workflow deploys `main` to GitHub Pages on every push. There is no b
 The app is plain ES modules: `src/core/` is the library (used by the app, the CLI and
 the tests), and `web/` is the page.
 
-The sample uses a Revit box and lid. Its single-value exports (width, length and height
-changed one at a time) were made with the zone stretch that matches Revit, see
-`test/revit.test.js`.
+The sample is a box and lid exported from a parametric CAD program. Its single-value
+exports (width, length and height changed one at a time) were made with the zone stretch
+that matches the program's own resized export, see `test/cad.test.js`.
 
 ## Command line
 

@@ -516,7 +516,7 @@ for (const el of [drop, $('view')]) {
   el.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addParts(e.dataTransfer.files); });
 }
 
-// Sample: a box and lid exported from Revit at 35 x 105 x 30, and one changed export per value.
+// Sample: a box and lid exported from a parametric CAD program at 35 x 105 x 30, and one changed export per value.
 $('sample').addEventListener('click', async () => {
   setStatus('Loading sample…');
   const get = async n => new File([await (await fetch(`samples/${n}`)).arrayBuffer()], n);
