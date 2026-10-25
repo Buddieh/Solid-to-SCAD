@@ -4,12 +4,19 @@
   "description": "Turn STL files into one parametric OpenSCAD file for MakerWorld's Parametric Model Maker",
   "type": "module",
   "main": "src/core/index.js",
-  "bin": { "stl2scad": "bin/stl2scad.js" },
-  "scripts": {
-    "test": "node --test test/*.test.js"
+  "bin": {
+    "stl2scad": "bin/stl2scad.js"
   },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build-site.js",
+    "dev": "node scripts/serve.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "manifold-3d": "3.5.4"
+    "manifold-3d": "3.5.4",
+    "three": "0.169.0"
   }
 }
