@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solid to SCAD</title>
+  <meta name="description" content="Turn STL files into one parametric OpenSCAD file for MakerWorld's Parametric Model Maker.">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/",
+        "manifold-3d": "./vendor/manifold/manifold.js"
+      }
+    }
+  </script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Solid to SCAD</h1>
+    <p>STL files in, one parametric <code>.scad</code> out, ready for MakerWorld's Parametric Model Maker.</p>
+  </header>
+  <main>
+    <aside id="panel">
+      <section>
+        <h2>1. Parts</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="files" accept=".stl" multiple hidden>
+          <span>Drop STL files here or <u>choose files</u></span>
+        </label>
+        <button type="button" id="sample" class="link">Try the sample box + lid</button>
+        <ul id="parts"></ul>
+        <p class="hint" id="parts-hint">The first part is the reference: the sizes describe its outer dimensions.</p>
+      </section>
+      <section id="params-section" hidden>
+        <h2>2. Sizes</h2>
+        <p class="hint">Each size stretches the part between its two cut planes and moves the rest without changing shape. On the strip, green means a clean cut: drag the handles to move the planes. Double-click the view to re-frame it.</p>
+        <div id="params"></div>
+      </section>
+      <section id="export-section" hidden>
+        <h2>3. Export</h2>
+        <label class="row">Title <input id="title" type="text" value=""></label>
+        <label class="row">Mesh tolerance, mm
+          <input id="tolerance" type="number" value="0.001" min="0" max="0.1" step="0.001">
+        </label>
+        <button type="button" id="export" class="primary">Download .scad</button>
+        <p class="hint" id="export-info"></p>
+      </section>
+    </aside>
+    <section id="view">
+      <div id="status" role="status"></div>
+      <div id="empty">Add one or more STL files to start.</div>
+    </section>
+  </main>
+</body>
+</html>
