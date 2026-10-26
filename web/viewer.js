@@ -39,7 +39,9 @@ export class Viewer {
   resize() {
     const { clientWidth: w, clientHeight: h } = this.container;
     if (!w || !h) return;
-    this.renderer.setSize(w, h);
+    // false: leave the canvas's CSS size to the stylesheet. A fixed pixel size here would stop
+    // #view shrinking, so a scrollbar appearing could push the page into a resize loop.
+    this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.render();
