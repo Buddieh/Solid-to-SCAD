@@ -5,11 +5,11 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simplifyMesh, suggestModel, exportScad, parseSTL, indexMesh, bounds, openEdgeCount } from '../src/core/index.js';
-import { load } from './helpers.js';
+import { makeBox, makeLid } from './model.js';
 
 const parts = [
-  { name: 'box', mesh: await simplifyMesh(load('box.stl')) },
-  { name: 'lid', mesh: await simplifyMesh(load('lid.stl')) },
+  { name: 'box', mesh: await simplifyMesh(makeBox({ divider: false })) },
+  { name: 'lid', mesh: await simplifyMesh(makeLid()) },
 ];
 const { params } = suggestModel(parts);
 const scad = exportScad({ title: 'Container', parts, params });

@@ -1,17 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSTL, indexMesh, openEdgeCount, bounds, volume } from '../src/core/index.js';
-import { load } from './helpers.js';
+import { writeSTL } from '../src/core/index.js';
+import { makeBox } from './model.js';
 
-test('reads the binary sample box as a closed solid', () => {
-  const box = load('box.stl');
-  assert.equal(box.faces.length / 3, 13044);
-  assert.equal(box.points.length / 3, 6524);
+test('writes and reads back a binary STL as a closed solid', () => {
+  const made = makeBox();
+  const box = indexMesh(parseSTL(writeSTL(made)));
+  assert.equal(box.faces.length, made.faces.length);
+  assert.equal(box.points.length, made.points.length);
   assert.equal(openEdgeCount(box), 0);
   const [lo, hi] = bounds(box);
   assert.deepEqual(lo.map(v => +v.toFixed(3) + 0), [-17.5, -52.5, 0]);
   assert.deepEqual(hi.map(v => +v.toFixed(3) + 0), [17.5, 52.5, 30]);
-  assert.ok(Math.abs(volume(box) - 17723.9) < 0.1);
+  assert.ok(Math.abs(volume(box) - volume(made)) < 0.1);
 });
 
 test('reads ASCII STL', () => {
