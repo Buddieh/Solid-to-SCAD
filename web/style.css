@@ -34,7 +34,18 @@ body {
   background: var(--bg); color: var(--text);
   display: flex; flex-direction: column;
 }
-header { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+header {
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+header a.back {
+  flex: none; padding: 7px 12px; border: 2px solid var(--text); border-radius: 10px;
+  background: var(--panel); color: var(--text); box-shadow: 3px 3px 0 var(--text);
+  font: 500 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none; white-space: nowrap;
+}
+header a.back:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--text); }
+header a.back:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 header h1 { margin: 0; font-size: 18px; }
 header p { margin: 2px 0 0; color: var(--muted); }
 main { flex: 1; display: flex; min-height: 0; }
