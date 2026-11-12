@@ -6,6 +6,7 @@ import {
   applyChanges, safeRange, exportLearnedScad,
 } from './src/core/index.js';
 import { Viewer } from './viewer.js';
+import { tipHTML } from './tip.js';
 
 const SPACING = 5;
 const GOOD_FIT = 0.05;  // mm: within this the learned change reproduces the changed export
@@ -194,10 +195,10 @@ const amount = (param, value) => (value - param.base) / (param.variant - param.b
 
 function problems(param) {
   const out = [];
-  const err = text => out.push({ level: 'error', text });
-  const warn = text => out.push({ level: 'warn', text });
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(param.name)) err('The name can only use letters, digits and _, and cannot start with a digit.');
-  if (state.params.some(q => q !== param && q.name === param.name)) err('Another value has the same name.');
+  const err = (text, tip) => out.push({ level: 'error', text, tip });
+  const warn = (text, tip) => out.push({ level: 'warn', text, tip });
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(param.name)) err('Name: letters, digits and _ only.', 'The name becomes an OpenSCAD variable, so it can only use letters, digits and _, and cannot start with a digit.');
+  if (state.params.some(q => q !== param && q.name === param.name)) err('Name already used.');
   if (!valuesSet(param)) err(param.base === param.variant && Number.isFinite(param.base)
     ? 'The default and changed values are the same.' : 'Enter the default value and the changed value.');
   const slots = Object.values(param.slots);
@@ -207,17 +208,17 @@ function problems(param) {
     const s = param.slots[part.id];
     if (s?.status === 'error') err(`${part.name}: ${s.fileName} ${s.error}`);
     if (s?.status === 'done' && s.learned.fit.max > BAD_FIT) {
-      err(`${part.name}: the changed export can't be reached by moving and stretching the default one ` +
-        `(off by up to ${fmt(s.learned.fit.max)} mm). This happens when a value changes how many of something ` +
-        'there are, rotates or bends something, or the files are different models.');
+      err(`${part.name}: doesn't match the default export (off by up to ${fmt(s.learned.fit.max)} mm).`,
+        "Moving and stretching the default export can't produce the changed one. This happens when a value " +
+        'changes how many of something there are, rotates or bends something, or the files are different models.');
     } else if (s?.status === 'done' && s.learned.fit.max > GOOD_FIT) {
-      warn(`${part.name}: close but not exact (off by up to ${fmt(s.learned.fit.max)} mm). ` +
-        'Check the preview, especially at the ends of the range.');
+      warn(`${part.name}: close, off by up to ${fmt(s.learned.fit.max)} mm.`,
+        'Not an exact match. Check the preview, especially at the ends of the range.');
     }
   }
   if (valuesSet(param) && learnedSlots(param).length && [param.min, param.max, param.step].every(Number.isFinite)) {
-    if (!(param.min < param.max) || param.step <= 0) err('The range needs min < max and a positive step.');
-    else if (param.min > param.base || param.max < param.base) err('The range must include the default value.');
+    if (!(param.min < param.max) || param.step <= 0) err('Need min < max and step > 0.');
+    else if (param.min > param.base || param.max < param.base) err('Range must include the default.');
     else {
       const [lo, hi] = safeAmounts(param);
       const sMin = Math.min(amount(param, param.min), amount(param, param.max));
@@ -225,7 +226,8 @@ function problems(param) {
       if (sMin < lo - 1e-9 || sMax > hi + 1e-9) {
         const v = s => fmt(param.base + s * (param.variant - param.base));
         const [a, b] = [v(lo), v(hi)].map(Number).sort((x, y) => x - y);
-        err(`Parts would fold inside out outside ${Number.isFinite(a) ? a : '−∞'} to ${Number.isFinite(b) ? b : '∞'}. Narrow the range.`);
+        err(`Keep the range within ${Number.isFinite(a) ? a : '−∞'} to ${Number.isFinite(b) ? b : '∞'}.`,
+          'Outside that range, parts would fold inside out.');
       }
     }
   }
@@ -254,7 +256,7 @@ function comboProblems(params) {
         if (worst < KEEP * g) { bad = true; break; }
       }
     }
-    if (bad) out.push(`${part.name} folds when ${ps.map(p => p.name).join(', ')} are all near the ends of their ranges. Narrow one of the ranges.`);
+    if (bad) out.push(`${part.name} folds when ${ps.map(p => p.name).join(', ')} are all near their limits. Narrow one range.`);
   }
   return out;
 }
@@ -317,7 +319,7 @@ function paramCard(param) {
       <label>Default value<input type="number" class="base" step="any" value="${num(param.base)}"></label>
       <label>Changed value<input type="number" class="variant" step="any" value="${num(param.variant)}"></label>
     </div>
-    <p class="hint">Changed exports, one per part. Leave a part empty if this value doesn't change it.</p>
+    <p class="hint">Changed exports ${tipHTML("One file per part, exported with only this value changed. Leave a part empty if this value doesn't change it.")}</p>
     <div class="slots"></div>
     <div class="range" hidden>
       <div class="grid">
@@ -428,6 +430,7 @@ function refreshCard(card, param) {
     const p = document.createElement('p');
     p.className = `msg ${m.level}`;
     p.textContent = m.text;
+    if (m.tip) p.insertAdjacentHTML('beforeend', ' ' + tipHTML(m.tip));
     msgs.appendChild(p);
   }
 }
@@ -443,7 +446,7 @@ function renderExport() {
   if (!$('title').value) $('title').value = defaultTitle();
   const msgs = [];
   const blocked = state.params.filter(p => problems(p).some(m => m.level === 'error'));
-  for (const p of blocked) msgs.push(`“${p.name}” isn't ready yet, so it is left out.`);
+  for (const p of blocked) msgs.push(`“${p.name}” isn't ready, so it's left out.`);
   const ready = readyParams();
   const combos = comboProblems(ready);
   msgs.push(...combos);

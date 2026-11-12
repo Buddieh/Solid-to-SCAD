@@ -22,15 +22,14 @@
   <header>
     <div>
       <h1>Solid to SCAD</h1>
-      <p>STL files in, one parametric <code>.scad</code> out, ready for MakerWorld's Parametric Model Maker.</p>
+      <p>STL files in, one parametric <code>.scad</code> out. <button type="button" class="tip" aria-label="More info" aria-expanded="false" data-tip="Made for MakerWorld's Parametric Model Maker, so people can resize your model themselves. Runs in your browser: your files never leave your computer.">?</button></p>
     </div>
     <a class="back" href="../projects/">← Projects</a>
   </header>
   <main>
     <aside id="panel">
       <section>
-        <h2>1. Default model</h2>
-        <p class="hint">Export the model at its default values. Each STL file becomes one part (a file can hold several bodies).</p>
+        <h2>1. Default model <button type="button" class="tip" aria-label="More info" aria-expanded="false" data-tip="Export the model at its default values. Each STL file becomes one part, and a file can hold several bodies.">?</button></h2>
         <label class="drop" id="drop">
           <input type="file" id="files" accept=".stl" multiple hidden>
           <span>Drop STL files here or <u>choose files</u></span>
@@ -38,8 +37,7 @@
         <ul id="parts"></ul>
       </section>
       <section id="params-section" hidden>
-        <h2>2. Values</h2>
-        <p class="hint">For each value people should be able to change, export the model again with only that value changed and add those files here. The app works out what the value moves by comparing the two exports.</p>
+        <h2>2. Values <button type="button" class="tip" aria-label="More info" aria-expanded="false" data-tip="For each value people should be able to change, export the model again with only that value changed and add those files here. The app compares the two exports to work out what the value moves.">?</button></h2>
         <div id="params"></div>
         <button type="button" id="add-param" class="secondary">+ Add a value</button>
       </section>
@@ -53,7 +51,7 @@
     </aside>
     <section id="view">
       <div id="status" role="status"></div>
-      <div id="empty">Add one or more STL files to start.</div>
+      <div id="empty">Add STL files to start.</div>
     </section>
   </main>
   <script src="https://buddieh.github.io/hub.js" defer></script>
